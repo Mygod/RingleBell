@@ -4,32 +4,56 @@ using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Media;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using System.Xml.Linq;
-using IrrKlang;
 using Mygod.Xml.Linq;
 
 namespace Mygod.RingleBell
 {
     static class Program
     {
+        /// <summary>
+        /// 用于将错误转化为可读的字符串。
+        /// </summary>
+        /// <param name="e">错误。</param>
+        /// <returns>错误字符串。</returns>
+        public static string GetMessage(this Exception e)
+        {
+            var result = new StringBuilder();
+            GetMessage(e, result);
+            return result.ToString();
+        }
+
+        private static void GetMessage(Exception e, StringBuilder result)
+        {
+            while (e != null && !(e is AggregateException))
+            {
+                result.AppendFormat("({0}) {1}{2}{3}{2}", e.GetType(), e.Message, Environment.NewLine, e.StackTrace);
+                e = e.InnerException;
+            }
+            var ae = e as AggregateException;
+            if (ae != null) foreach (var ex in ae.InnerExceptions) GetMessage(ex, result);
+        }
+
         [STAThread]
         public static void Main()
         {
+			AppDomain.CurrentDomain.UnhandledException += (sender, e) => MessageBox.Show(((Exception) e.ExceptionObject).GetMessage());
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             var schedules = XHelper.Load("Schedule.xml").ElementCaseInsensitive("Schedule").Elements()
                                    .Select(Schedule.GetSchedule).ToArray();
             Notify.MouseUp += (sender, e) =>
             {
-                if (e.Button == MouseButtons.Left) Engine.StopAllSounds();
+                //if (e.Button == MouseButtons.Left) Engine.StopAllSounds();
                 if (e.Button == MouseButtons.Right) Application.Exit();
             };
-            Notify.BalloonTipClicked += (sender, e) => Engine.StopAllSounds();
-            Notify.BalloonTipClosed += (sender, e) => Engine.StopAllSounds();
+            //Notify.BalloonTipClicked += (sender, e) => Engine.StopAllSounds();
+            //Notify.BalloonTipClosed += (sender, e) => Engine.StopAllSounds();
             Notify.Visible = true;
             timer = new Timer { Interval = 1000 };
             timer.Tick += (sender, e) =>
@@ -44,8 +68,12 @@ namespace Mygod.RingleBell
                     if (mute != null) pending.Clear();
                 }
                 foreach (var play in pending)
-                    Notify.ShowBalloonTip((int) Engine.Play2D(play.Sound[Random.Next(play.Sound.Length)]).PlayLength, play.Name,
-                                          now.ToString("yyyy.M.d H:mm:ss"), ToolTipIcon.Info);
+                {
+                    var path = play.Sound[Random.Next(play.Sound.Length)];
+                    if (!Players.ContainsKey(path)) Players[path] = new SoundPlayer(path);
+                    Players[path].Play();
+                    Notify.ShowBalloonTip(10000, play.Name, now.ToString("yyyy.M.d H:mm:ss"), ToolTipIcon.Info);
+                }
             };
             timer.Enabled = true;
             Notify.ShowBalloonTip(5000, Title + " 已成功启动。", "左键点击可使它闭嘴，右键点击可以杀死它。\r\n" +
@@ -54,10 +82,10 @@ namespace Mygod.RingleBell
         }
 
         private static Timer timer;
-        private static readonly ISoundEngine Engine = new ISoundEngine();
         private static readonly Random Random = new Random();
         private static readonly NotifyIcon Notify = new NotifyIcon
             { Text = Title, Icon = IconExtractor.GetIcon(Assembly.GetEntryAssembly().Location) };
+        private static readonly Dictionary<string, SoundPlayer> Players = new Dictionary<string, SoundPlayer>();
 
         private static AssemblyName NowAssemblyName { get { return Assembly.GetEntryAssembly().GetName(); } }
         public static string Title { get { return NowAssemblyName.Name + " V" + NowAssemblyName.Version; } }
